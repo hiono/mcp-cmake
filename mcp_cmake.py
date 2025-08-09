@@ -1,3 +1,4 @@
+import json  # Added missing import
 import os
 import re
 import subprocess
@@ -7,6 +8,7 @@ from datetime import datetime
 from typing import Any, Dict, Iterator, List, Optional
 
 import gradio as gr
+from packaging.version import Version  # Added for version comparison
 
 # --- Constants ---
 CMAKE_EXE = "cmake"
@@ -106,9 +108,9 @@ class ErrorAnalyzer:
 
     LINK_ERROR_PATTERNS = [
         # MSVC linker
-        (r"(.+?)\s*:\s*error\s+LNK(\d+):\s*(.+)", "msvc_link"),
+        (r"\s*(.+?)\s*:\s*error\s+LNK(\d+):\s+(.+)", "msvc_link"),
         # GCC/Clang linker
-        (r"(.+?):\s*undefined reference to\s*(.+)", "gcc_link"),
+        (r"\s*(.+?):\(.+?\):\s*(undefined reference to `.+?`)", "gcc_link"),
         # Generic linker error
         (r"ld:\s*(.+)", "generic_link"),
     ]
@@ -139,7 +141,7 @@ class ErrorAnalyzer:
         self, output: str, command_type: str = "build"
     ) -> Optional[StructuredError]:
         """エラー出力を解析して構造化されたエラー情報を生成する"""
-        if not output or "[ERROR]" not in output:
+        if not output:  # Keep this check for truly empty output
             return None
 
         # エラータイプに応じてパターンを選択
@@ -157,8 +159,15 @@ class ErrorAnalyzer:
             if match:
                 return self._create_structured_error(match, error_type, output)
 
-        # パターンにマッチしない場合は汎用エラーとして処理
-        return self._create_generic_error(output, command_type)
+        # どのパターンにもマッチしない場合、汎用エラーとして処理を試みる
+        # ただし、出力に一般的なエラーを示すキーワードが含まれている場合のみ
+        if any(
+            keyword in output.lower()
+            for keyword in ["error", "failed", "fatal", "exception"]
+        ):
+            return self._create_generic_error(output, command_type)
+
+        return None  # No error pattern found and no general error keywords
 
     def _create_structured_error(
         self, match, error_type: str, raw_output: str
@@ -168,7 +177,7 @@ class ErrorAnalyzer:
 
         # エラータイプ別の処理
         if "compile" in error_type:
-            file_path = groups[0] if len(groups) > 0 else None
+            file_path = groups[0].strip() if len(groups) > 0 and groups[0] else None
             line_number = (
                 int(groups[1]) if len(groups) > 1 and groups[1].isdigit() else None
             )
@@ -177,17 +186,23 @@ class ErrorAnalyzer:
             )
             message = groups[-1] if groups else "Unknown compile error"
         elif "link" in error_type:
-            file_path = groups[0] if len(groups) > 0 else None
+            file_path = groups[0].strip() if len(groups) > 0 and groups[0] else None
             line_number = None
             column_number = None
             message = groups[-1] if groups else "Unknown link error"
         elif "cmake" in error_type:
-            file_path = groups[0] if len(groups) > 0 else None
+            file_path = groups[0].strip() if len(groups) > 0 and groups[0] else None
             line_number = (
                 int(groups[1]) if len(groups) > 1 and groups[1].isdigit() else None
             )
             column_number = None
             message = groups[-1] if groups else "Unknown CMake error"
+        elif "test" in error_type:
+            file_path = None
+            line_number = None
+            column_number = None
+            # For test errors, the message should be the full matched string
+            message = match.group(0) if match else "Unknown test error"
         else:
             file_path = None
             line_number = None
@@ -214,8 +229,21 @@ class ErrorAnalyzer:
     ) -> StructuredError:
         """汎用エラーを作成する"""
         # エラーメッセージを抽出
-        error_lines = [line for line in raw_output.split("\n") if "[ERROR]" in line]
-        message = error_lines[0] if error_lines else "Unknown error occurred"
+        keywords_priority = [
+            "error:",
+            "fatal:",
+            "exception:",
+            "error",
+            "fatal",
+            "exception",
+            "failed",
+        ]
+        relevant_lines = []
+        for line in raw_output.split("\n"):
+            stripped_line = line.strip()
+            if any(keyword in stripped_line.lower() for keyword in keywords_priority):
+                relevant_lines.append(stripped_line)
+        message = relevant_lines[0] if relevant_lines else "Unknown error occurred"
 
         return StructuredError(
             error_type=f"{command_type}_generic",
@@ -254,12 +282,12 @@ class ErrorAnalyzer:
 
                         for i in range(start, end):
                             if i == line_number - 1:
-                                prefix = ">>> "  # エラー行をハイライト
+                                prefix = ">>>"  # エラー行をハイライト
                             elif abs(i - (line_number - 1)) <= 1:
-                                prefix = "  > "  # エラー行の近くをマーク
+                                prefix = ">"  # エラー行の近くをマーク
                             else:
-                                prefix = "    "
-                            context.append(f"{prefix}{i+1:4d}: {lines[i].rstrip()}")
+                                prefix = ""
+                            context.append(f"{prefix} {i+1:d}: {lines[i].rstrip()}")
                 except Exception as e:
                     context.append(f"[Context extraction failed: {str(e)}]")
             else:
@@ -355,6 +383,8 @@ class ErrorAnalyzer:
                 )
                 details["error_types"].append(f"gcc_{severity}")
                 details["line_numbers"].append(int(line_num))
+                if not details["compiler_info"]:
+                    details["compiler_info"] = "GCC"
                 continue
 
             # CMake エラーパターン
@@ -515,7 +545,10 @@ class ErrorAnalyzer:
                 )
 
         elif "link" in error_type:
-            if "undefined reference" in message.lower():
+            if (
+                "undefined reference" in message.lower()
+                or "unresolved external symbol" in message.lower()
+            ):
                 suggestions.extend(
                     [
                         "Check if the referenced function/variable is implemented",
@@ -1893,9 +1926,12 @@ def health_check(working_dir: str = "sample") -> Dict[str, Any]:
         "overall_status": "unknown",
     }
 
+    critical_issues = 0  # Initialize critical_issues as an integer counter
+
     # Working directory check
     abs_working_dir = os.path.abspath(working_dir)
     health_status["working_directory_exists"] = os.path.isdir(abs_working_dir)
+
     if not health_status["working_directory_exists"]:
         health_status["issues"].append(
             f"Working directory does not exist: {abs_working_dir}"
@@ -1966,6 +2002,47 @@ def health_check(working_dir: str = "sample") -> Dict[str, Any]:
         health_status["cmake_presets_path"] = presets_path
         health_status["cmake_presets_exists"] = os.path.isfile(presets_path)
 
+        min_cmake_version = None
+        if health_status["cmake_presets_exists"]:
+            try:
+                with open(presets_path, "r") as f:
+                    presets = json.load(f)
+                min_req = presets.get("cmakeMinimumRequired", {})
+                major = min_req.get("major", 0)
+                minor = min_req.get("minor", 0)
+                patch = min_req.get("patch", 0)
+                min_cmake_version = Version(f"{major}.{minor}.{patch}")
+            except Exception as e:
+                health_status["issues"].append(
+                    f"Error reading CMakePresets.json: {str(e)}"
+                )
+                health_status["recommendations"].append(
+                    "Ensure CMakePresets.json is valid JSON"
+                )
+
+        # Version compatibility check
+        if min_cmake_version:
+            if health_status["cmake_available"] and health_status["cmake_version"]:
+                current_cmake_version = Version(health_status["cmake_version"])
+                if current_cmake_version < min_cmake_version:
+                    health_status["issues"].append(
+                        f"CMake version {current_cmake_version} is older than required {min_cmake_version}"
+                    )
+                    health_status["recommendations"].append(
+                        f"Update CMake to version {min_cmake_version} or newer"
+                    )
+                    critical_issues += 1
+            if health_status["ctest_available"] and health_status["ctest_version"]:
+                current_ctest_version = Version(health_status["ctest_version"])
+                if current_ctest_version < min_cmake_version:
+                    health_status["issues"].append(
+                        f"CTest version {current_ctest_version} is older than required {min_cmake_version}"
+                    )
+                    health_status["recommendations"].append(
+                        f"Update CTest to version {min_cmake_version} or newer"
+                    )
+                    critical_issues += 1
+
         if not health_status["cmake_presets_exists"]:
             health_status["issues"].append(
                 f"CMakePresets.json not found in {abs_working_dir}"
@@ -1986,15 +2063,10 @@ def health_check(working_dir: str = "sample") -> Dict[str, Any]:
                 )
 
     # Overall status determination
-    critical_issues = 0
-    if not health_status["cmake_available"]:
-        critical_issues += 1
-    if not health_status["ctest_available"]:
-        critical_issues += 1
-    if not health_status["working_directory_exists"]:
-        critical_issues += 1
 
-    if critical_issues == 0:
+    if not health_status["cmake_available"] or not health_status["ctest_available"]:
+        health_status["overall_status"] = "critical"
+    elif critical_issues == 0:
         if health_status["cmake_presets_exists"]:
             health_status["overall_status"] = "healthy"
         else:
@@ -2002,7 +2074,9 @@ def health_check(working_dir: str = "sample") -> Dict[str, Any]:
             health_status["recommendations"].append(
                 "System is functional but CMakePresets.json is missing for full functionality"
             )
-    elif critical_issues <= 1:
+    elif (
+        critical_issues <= 1
+    ):  # This block will now only be reached if cmake_available and ctest_available are True
         health_status["overall_status"] = "warning"
     else:
         health_status["overall_status"] = "critical"
@@ -2430,7 +2504,7 @@ def main():
                 1. Click "Run Health Check" to diagnose your system
                 2. Follow any recommendations provided
                 3. Re-run the health check to verify fixes
-                
+
                 **Common Issues:**
                 - **CMake not found**: Install CMake from https://cmake.org/download/
                 - **Windows users**: Use Visual Studio Developer Command Prompt
