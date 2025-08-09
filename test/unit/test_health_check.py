@@ -88,7 +88,65 @@ def test_health_check_cmake_not_found(mocker):
     assert health_status["working_directory_exists"] is True
 
 
-def test_cmake_ctest_version_older_than_minimum(mocker):
+def get_test_version_scenarios():
+    preset_file = "/workspace/sample/CMakePresets.json"
+    min_cmake_version = get_minimum_cmake_version(preset_file)
+
+    # Calculate versions relative to min_cmake_version
+    # Ensure minor version doesn't go below 0 for older_version
+    older_version_minor = max(0, min_cmake_version.minor - 1)
+    older_version = Version(f"{min_cmake_version.major}.{older_version_minor}.0")
+    newer_version = Version(
+        f"{min_cmake_version.major}.{min_cmake_version.minor + 1}.0"
+    )
+
+    return [
+        # Scenario 1: Both older than minimum
+        (
+            str(older_version),
+            str(older_version),
+            "critical",
+            [
+                f"CMake version {older_version} is older than required {min_cmake_version}",
+                f"CTest version {older_version} is older than required {min_cmake_version}",
+            ],
+        ),
+        # Scenario 2: Both newer than minimum
+        (str(newer_version), str(newer_version), "healthy", []),
+        # Scenario 3: CMake older, CTest newer
+        (
+            str(older_version),
+            str(newer_version),
+            "critical",
+            [
+                f"CMake version {older_version} is older than required {min_cmake_version}"
+            ],
+        ),
+        # Scenario 4: CMake newer, CTest older
+        (
+            str(newer_version),
+            str(older_version),
+            "critical",
+            [
+                f"CTest version {older_version} is older than required {min_cmake_version}"
+            ],
+        ),
+        # Scenario 5: Both equal to minimum
+        (str(min_cmake_version), str(min_cmake_version), "healthy", []),
+    ]
+
+
+@pytest.mark.parametrize(
+    "cmake_mock_version, ctest_mock_version, expected_overall_status, expected_issues_substrings",
+    get_test_version_scenarios(),  # Use the dynamically generated scenarios
+)
+def test_cmake_ctest_version_compatibility(
+    mocker,
+    cmake_mock_version,
+    ctest_mock_version,
+    expected_overall_status,
+    expected_issues_substrings,
+):
     preset_file = "/workspace/sample/CMakePresets.json"
     min_cmake_version = get_minimum_cmake_version(preset_file)
 
@@ -96,22 +154,14 @@ def test_cmake_ctest_version_older_than_minimum(mocker):
     mocker.patch("os.path.isfile", side_effect=lambda p: p == preset_file)
     mocker.patch("os.path.isdir", return_value=True)  # Mock working directory exists
 
-    # Mock subprocess.run to return older versions
+    # Mock subprocess.run to return specified versions
     def mock_subprocess_run(cmd, *args, **kwargs):
         mock_result = mocker.Mock()
         mock_result.returncode = 0
         if "cmake" in cmd:
-            # Return a version older than min_cmake_version
-            older_version = Version(
-                f"{min_cmake_version.major}.{min_cmake_version.minor - 1}.0"
-            )
-            mock_result.stdout = f"cmake version {older_version}\n"
+            mock_result.stdout = f"cmake version {cmake_mock_version}\n"
         elif "ctest" in cmd:
-            # Return a version older than min_cmake_version
-            older_version = Version(
-                f"{min_cmake_version.major}.{min_cmake_version.minor - 1}.0"
-            )
-            mock_result.stdout = f"ctest version {older_version}\n"
+            mock_result.stdout = f"ctest version {ctest_mock_version}\n"
         return mock_result
 
     mocker.patch("subprocess.run", side_effect=mock_subprocess_run)
@@ -120,54 +170,14 @@ def test_cmake_ctest_version_older_than_minimum(mocker):
     health_status = health_check()
 
     # Assertions
-    assert health_status["overall_status"] == "critical"
-    assert (
-        f"CMake version {Version(f'{min_cmake_version.major}.{min_cmake_version.minor - 1}.0')} is older than required {min_cmake_version}"
-        in health_status["issues"]
-    )
-    assert (
-        f"CTest version {Version(f'{min_cmake_version.major}.{min_cmake_version.minor - 1}.0')} is older than required {min_cmake_version}"
-        in health_status["issues"]
-    )
+    assert health_status["overall_status"] == expected_overall_status
 
+    for substring in expected_issues_substrings:
+        assert substring in health_status["issues"]
 
-def test_cmake_ctest_version_newer_than_minimum(mocker):
-    preset_file = "/workspace/sample/CMakePresets.json"
-    min_cmake_version = get_minimum_cmake_version(preset_file)
-
-    # Mock os.path.isfile for CMakePresets.json
-    mocker.patch("os.path.isfile", side_effect=lambda p: p == preset_file)
-    mocker.patch("os.path.isdir", return_value=True)  # Mock working directory exists
-
-    # Mock subprocess.run to return newer versions
-    def mock_subprocess_run(cmd, *args, **kwargs):
-        mock_result = mocker.Mock()
-        mock_result.returncode = 0
-        if "cmake" in cmd:
-            # Return a version newer than min_cmake_version
-            newer_version = Version(
-                f"{min_cmake_version.major}.{min_cmake_version.minor + 1}.0"
-            )
-            mock_result.stdout = f"cmake version {newer_version}\n"
-        elif "ctest" in cmd:
-            # Return a version newer than min_cmake_version
-            newer_result = mocker.Mock()
-            newer_result.returncode = 0
-            newer_version = Version(
-                f"{min_cmake_version.major}.{min_cmake_version.minor + 1}.0"
-            )
-            newer_result.stdout = f"ctest version {newer_version}\n"
-            return newer_result
-        return mock_result
-
-    mocker.patch("subprocess.run", side_effect=mock_subprocess_run)
-
-    # Call the health_check function
-    health_status = health_check()
-
-    # Assertions
-    assert (
-        health_status["overall_status"] == "healthy"
-    )  # Assuming presets exist and no other issues
-    assert "CMake version" not in str(health_status["issues"])
-    assert "CTest version" not in str(health_status["issues"])
+    # Ensure no unexpected issues are present
+    if not expected_issues_substrings:
+        assert not health_status["issues"]
+    else:
+        # Check that there are no other issues beyond the expected ones
+        assert len(health_status["issues"]) == len(expected_issues_substrings)

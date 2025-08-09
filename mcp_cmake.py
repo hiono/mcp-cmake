@@ -2066,6 +2066,8 @@ def health_check(working_dir: str = "sample") -> Dict[str, Any]:
 
     if not health_status["cmake_available"] or not health_status["ctest_available"]:
         health_status["overall_status"] = "critical"
+    elif critical_issues > 0:
+        health_status["overall_status"] = "critical"
     elif critical_issues == 0:
         if health_status["cmake_presets_exists"]:
             health_status["overall_status"] = "healthy"
@@ -2074,12 +2076,6 @@ def health_check(working_dir: str = "sample") -> Dict[str, Any]:
             health_status["recommendations"].append(
                 "System is functional but CMakePresets.json is missing for full functionality"
             )
-    elif (
-        critical_issues <= 1
-    ):  # This block will now only be reached if cmake_available and ctest_available are True
-        health_status["overall_status"] = "warning"
-    else:
-        health_status["overall_status"] = "critical"
 
     # Add Windows-specific recommendations if needed
     if not health_status["cmake_available"] and os.name == "nt":
