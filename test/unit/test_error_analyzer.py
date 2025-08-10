@@ -3,7 +3,8 @@ from unittest.mock import mock_open, patch
 
 import pytest
 
-from mcp_cmake import ErrorAnalyzer, StructuredError, parse_cmake_defines_string
+from mcp_cmake.mcp_cmake_core import ErrorAnalyzer, parse_cmake_defines_string
+from mcp_cmake.mcp_cmake_models import StructuredError
 
 
 @pytest.mark.parametrize(

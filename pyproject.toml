@@ -4,11 +4,14 @@ version = "0.1.0"
 description = "MCP server for CMake project management using Gradio"
 requires-python = ">=3.12"
 dependencies = [
-    "gradio[mcp]>=4.0",
+    "mcp[cli]",
 ]
 
 [project.scripts]
-mcp-cmake = "mcp_cmake:main"
+mcp-cmake = "mcp_cmake.mcp_cmake_server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["mcp_cmake"]
 
 [project.optional-dependencies]
 dev = [

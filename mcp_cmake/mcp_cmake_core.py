@@ -1,95 +1,24 @@
-import json  # Added missing import
+import json
 import os
 import re
 import subprocess
 import sys
-from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, Iterator, List, Optional
 
-import gradio as gr
-from packaging.version import Version  # Added for version comparison
+from packaging.version import Version
+
+from mcp_cmake.mcp_cmake_models import (
+    BuildErrorInfo,
+    CommandResult,
+    CompileError,
+    StructuredError,
+    TestErrorInfo,
+    TestFailure,
+)
 
 # --- Constants ---
 CMAKE_EXE = "cmake"
-
-
-# --- Data Models ---
-@dataclass
-class StructuredError:
-    """構造化されたエラー情報を表現するデータクラス"""
-
-    error_type: str  # "compile", "link", "test", "cmake"
-    file_path: Optional[str]
-    line_number: Optional[int]
-    column_number: Optional[int]
-    message: str
-    context: List[str]  # 周辺のソースコード行
-    suggestions: List[str]
-    raw_output: str
-
-
-@dataclass
-class CommandResult:
-    """コマンド実行結果を表現するデータクラス"""
-
-    success: bool
-    output: str
-    error_output: str
-    return_code: int
-    execution_time: float
-    structured_error: Optional[StructuredError] = None
-
-
-@dataclass
-class CompileError:
-    """個別のコンパイルエラー情報"""
-
-    file_path: str
-    line_number: Optional[int]
-    column_number: Optional[int]
-    error_code: Optional[str]
-    message: str
-    severity: str  # "error", "warning", "note"
-
-
-@dataclass
-class TestFailure:
-    """個別のテスト失敗情報"""
-
-    test_name: str
-    test_number: Optional[int]
-    failure_type: str  # "failed", "timeout", "not_run"
-    message: str
-    execution_time: Optional[float]
-
-
-@dataclass
-class BuildErrorInfo:
-    """ビルドエラーの構造化情報"""
-
-    compiler: str
-    error_count: int
-    warning_count: int
-    errors: List[CompileError]
-    llm_summary: str
-    raw_output: str
-    command: str
-    working_directory: str
-
-
-@dataclass
-class TestErrorInfo:
-    """テストエラーの構造化情報"""
-
-    total_tests: int
-    failed_tests: int
-    passed_tests: int
-    failed_test_details: List[TestFailure]
-    llm_summary: str
-    raw_output: str
-    command: str
-    working_directory: str
 
 
 # --- Error Analysis Engine ---
@@ -124,11 +53,11 @@ class ErrorAnalyzer:
 
     TEST_ERROR_PATTERNS = [
         # CTest test failures with ***Failed
-        (r"(\d+)/\d+\s+Test\s+#(\d+):\s+(.+?)\s+\.+\*\*\*Failed", "test_failed"),
+        (r"(\d+)/\d+\s+Test\s+#(\d+):\s+(.+?)\s+\.+\*{3}Failed", "test_failed"),
         # CTest timeout with ***Timeout
-        (r"(\d+)/\d+\s+Test\s+#(\d+):\s+(.+?)\s+\.+\*\*\*Timeout", "test_timeout"),
+        (r"(\d+)/\d+\s+Test\s+#(\d+):\s+(.+?)\s+\.+\*{3}Timeout", "test_timeout"),
         # CTest not run with ***Not Run
-        (r"(\d+)/\d+\s+Test\s+#(\d+):\s+(.+?)\s+\.+\*\*\*Not Run", "test_not_run"),
+        (r"(\d+)/\d+\s+Test\s+#(\d+):\s+(.+?)\s+\.+\*{3}Not Run", "test_not_run"),
         # Legacy patterns for backward compatibility
         (r"(\d+):\s*Test\s+(.+?)\s+.*Failed", "test_failed"),
         (r"(\d+):\s*Test\s+(.+?)\s+.*Timeout", "test_timeout"),
@@ -700,7 +629,10 @@ class ErrorAnalyzer:
         return output
 
     def analyze_build_errors(
-        self, output: str, command: str = "", working_dir: str = ""
+        self,
+        output: str,
+        command: str = "",
+        working_dir: str = "",
     ) -> BuildErrorInfo:
         """ビルドエラーを構造化して解析する"""
         errors = []
@@ -713,7 +645,7 @@ class ErrorAnalyzer:
             compiler = "MSVC"
         elif "gcc" in output.lower() or "g++" in output.lower():
             compiler = "GCC"
-        elif "clang" in output.lower():
+        elif "clang" in output.lower() or "clang++" in output.lower():
             compiler = "Clang"
 
         # エラーと警告をパース
@@ -786,7 +718,10 @@ class ErrorAnalyzer:
         )
 
     def analyze_test_errors(
-        self, output: str, command: str = "", working_dir: str = ""
+        self,
+        output: str,
+        command: str = "",
+        working_dir: str = "",
     ) -> TestErrorInfo:
         """テストエラーを構造化して解析する"""
         failed_tests = []
@@ -935,7 +870,11 @@ class ErrorAnalyzer:
         return summary
 
     def _generate_test_summary(
-        self, failed_tests: List[TestFailure], total: int, failed: int, passed: int
+        self,
+        failed_tests: List[TestFailure],
+        total: int,
+        failed: int,
+        passed: int,
     ) -> str:
         """テストエラーのLLMサマリーを生成"""
         if failed == 0:
@@ -1294,7 +1233,9 @@ def analyze_error_output(error_output: str, error_type: str = "build") -> str:
 
 
 def analyze_build_error_detailed(
-    error_output: str, command: str = "", working_dir: str = ""
+    error_output: str,
+    command: str = "",
+    working_dir: str = "",
 ) -> str:
     """ビルドエラーの詳細解析を実行してLLM向けフォーマットで返す"""
     if not error_output.strip():
@@ -1310,7 +1251,9 @@ def analyze_build_error_detailed(
 
 
 def analyze_test_error_detailed(
-    error_output: str, command: str = "", working_dir: str = ""
+    error_output: str,
+    command: str = "",
+    working_dir: str = "",
 ) -> str:
     """テストエラーの詳細解析を実行してLLM向けフォーマットで返す"""
     if not error_output.strip():
@@ -1403,66 +1346,6 @@ def get_error_statistics(
                 structured_error.message if structured_error else "No errors detected"
             ),
         }
-
-
-def get_error_statistics_ui(error_output: str, error_type: str = "build") -> tuple:
-    """エラー統計情報をUI用に取得する"""
-    if not error_output.strip():
-        empty_stats = {"message": "No error output provided"}
-        return empty_stats, empty_stats, "No error output provided for analysis."
-
-    # 詳細統計を取得
-    stats = get_error_statistics(error_output, error_type)
-
-    # エラー詳細情報を取得
-    analyzer = ErrorAnalyzer()
-    error_details = analyzer.extract_error_details(error_output)
-
-    # 統計情報を表示用に整理
-    display_stats = {
-        "error_type": error_type,
-        "total_files_with_errors": len(error_details.get("files_with_errors", [])),
-        "unique_error_types": len(error_details.get("error_types", [])),
-        "error_count_by_type": error_details.get("error_count_by_type", {}),
-        "compiler_info": error_details.get("compiler_info", "Unknown"),
-        "build_target": error_details.get("build_target", "Unknown"),
-    }
-
-    # サマリーテキストを生成
-    summary_text = f"Error Analysis Summary:\n"
-    summary_text += f"- Error Type: {error_type}\n"
-    summary_text += (
-        f"- Files with Errors: {len(error_details.get('files_with_errors', []))}\n"
-    )
-    summary_text += (
-        f"- Unique Error Types: {len(error_details.get('error_types', []))}\n"
-    )
-
-    if error_details.get("compiler_info"):
-        summary_text += f"- Compiler: {error_details['compiler_info']}\n"
-
-    if error_details.get("error_count_by_type"):
-        summary_text += f"- Error Count by Type:\n"
-        for err_type, count in error_details["error_count_by_type"].items():
-            summary_text += f"  * {err_type}: {count}\n"
-
-    # エラータイプ別の詳細
-    if error_details.get("files_with_errors"):
-        summary_text += f"\nFiles with Errors:\n"
-        for i, error in enumerate(
-            error_details["files_with_errors"][:5], 1
-        ):  # 最初の5個
-            summary_text += f"{i}. {error['file']}"
-            if error.get("line"):
-                summary_text += f" (Line {error['line']})"
-            summary_text += f": {error['message'][:100]}...\n"
-
-        if len(error_details["files_with_errors"]) > 5:
-            summary_text += (
-                f"... and {len(error_details['files_with_errors']) - 5} more errors\n"
-            )
-
-    return display_stats, display_stats, summary_text
 
 
 def copy_analysis_to_clipboard(analysis_text: str) -> str:
@@ -1646,7 +1529,9 @@ def list_presets(working_dir: str = "sample"):
 
 
 def configure_project(
-    preset: str, working_dir: str = "sample", cmake_defines: Dict[str, str] = None
+    preset: str,
+    working_dir: str = "sample",
+    cmake_defines: Dict[str, str] = None,
 ):
     """CMake configureを実行する（エラー解析機能付き）"""
     if not preset:
@@ -1669,59 +1554,6 @@ def configure_project(
     yield from execute_command_with_analysis(
         command, working_dir=working_dir, command_type="cmake"
     )
-
-
-def configure_project_with_defines(
-    preset: str,
-    working_dir: str = "sample",
-    defines_string: str = "",
-    verbose_makefile: bool = False,
-    build_shared_libs: bool = False,
-    build_type: str = "",
-    install_prefix: str = "",
-    find_root_path: str = "",
-    toolchain_file: str = "",
-):
-    """CMake configureを実行する（Define変数対応版）"""
-    if not preset:
-        yield "Please select a preset."
-        return
-
-    if not working_dir:
-        yield "Please specify a working directory."
-        return
-
-    # Parse custom defines from string
-    cmake_defines = parse_cmake_defines_string(defines_string)
-
-    # Add common variables if specified
-    if verbose_makefile:
-        cmake_defines["CMAKE_VERBOSE_MAKEFILE"] = "ON"
-
-    if build_shared_libs:
-        cmake_defines["BUILD_SHARED_LIBS"] = "ON"
-
-    if build_type:
-        cmake_defines["CMAKE_BUILD_TYPE"] = build_type
-
-    if install_prefix:
-        cmake_defines["CMAKE_INSTALL_PREFIX"] = install_prefix
-
-    if find_root_path:
-        cmake_defines["CMAKE_FIND_ROOT_PATH"] = find_root_path
-
-    if toolchain_file:
-        cmake_defines["CMAKE_TOOLCHAIN_FILE"] = toolchain_file
-
-    # Show the defines that will be used
-    if cmake_defines:
-        defines_info = "CMake defines to be applied:\n"
-        for key, value in cmake_defines.items():
-            defines_info += f"  -D{key}={value}\n"
-        yield defines_info + "\n"
-
-    # Call the main configure function
-    yield from configure_project(preset, working_dir, cmake_defines)
 
 
 def build_project(
@@ -1781,135 +1613,6 @@ def build_project_single_target(
     yield from build_project(preset, targets, working_dir, verbose, parallel_jobs)
 
 
-def build_project_multi_target_ui(
-    preset: str,
-    selected_targets: List[str],
-    custom_targets: str,
-    working_dir: str = "sample",
-    verbose: bool = False,
-    parallel_jobs: Optional[int] = None,
-):
-    """CMake buildを実行する（UI用複数ターゲット対応）"""
-    if not preset:
-        yield "Please select a build preset."
-        return
-
-    # Combine selected targets and custom targets
-    all_targets = []
-
-    # Add selected targets from checkbox group
-    if selected_targets:
-        all_targets.extend(selected_targets)
-
-    # Add custom targets from text input
-    if custom_targets and custom_targets.strip():
-        custom_target_list = [
-            target.strip() for target in custom_targets.split(",") if target.strip()
-        ]
-        all_targets.extend(custom_target_list)
-
-    # Remove duplicates while preserving order
-    unique_targets = []
-    seen = set()
-    for target in all_targets:
-        if target not in seen:
-            unique_targets.append(target)
-            seen.add(target)
-
-    # Show target configuration
-    if unique_targets:
-        yield f"Selected targets: {', '.join(unique_targets)}\n"
-    else:
-        yield "No specific targets selected, building default target.\n"
-
-    # Call the main build function
-    yield from build_project(
-        preset,
-        unique_targets if unique_targets else None,
-        working_dir,
-        verbose,
-        parallel_jobs,
-    )
-
-
-def build_project_with_options(
-    preset: str,
-    targets: List[str] = None,
-    working_dir: str = "sample",
-    verbose: bool = False,
-    parallel_jobs: Optional[int] = None,
-):
-    """CMake buildを実行する（全オプション対応版）"""
-    if not preset:
-        yield "Please select a build preset."
-        return
-
-    if not working_dir:
-        yield "Please specify a working directory."
-        return
-
-    # Show build configuration
-    config_info = f"Build Configuration:\n"
-    config_info += f"  Preset: {preset}\n"
-    config_info += f"  Working Directory: {working_dir}\n"
-
-    if targets:
-        valid_targets = [
-            target.strip() for target in targets if target and target.strip()
-        ]
-        if valid_targets:
-            config_info += f"  Targets: {', '.join(valid_targets)}\n"
-
-    if verbose:
-        config_info += f"  Verbose: Enabled\n"
-
-    if parallel_jobs and parallel_jobs > 0:
-        config_info += f"  Parallel Jobs: {parallel_jobs}\n"
-
-    config_info += "\n"
-    yield config_info
-
-    # Call the main build function
-    yield from build_project(preset, targets, working_dir, verbose, parallel_jobs)
-
-
-def test_project_ui(
-    preset: str,
-    working_dir: str = "sample",
-    verbose: bool = False,
-    test_filter: str = "",
-    parallel_jobs: Optional[int] = None,
-):
-    """CTest実行機能（UI用拡張オプション対応）"""
-    if not working_dir:
-        yield "Please specify a working directory."
-        return
-
-    # Show test configuration
-    config_info = f"Test Configuration:\n"
-    config_info += f"  Working Directory: {working_dir}\n"
-
-    if preset and preset.strip():
-        config_info += f"  Test Preset: {preset}\n"
-    else:
-        config_info += f"  Test Preset: None (using default test directory)\n"
-
-    if verbose:
-        config_info += f"  Verbose: Enabled\n"
-
-    if test_filter and test_filter.strip():
-        config_info += f"  Test Filter: {test_filter.strip()}\n"
-
-    if parallel_jobs and parallel_jobs > 0:
-        config_info += f"  Parallel Jobs: {parallel_jobs}\n"
-
-    config_info += "\n"
-    yield config_info
-
-    # Call the main test function
-    yield from test_project(preset, working_dir, verbose, test_filter, parallel_jobs)
-
-
 # --- Health Check Functions ---
 def health_check(working_dir: str = "sample") -> Dict[str, Any]:
     """システム環境の健全性チェックを実行する"""
@@ -1939,6 +1642,7 @@ def health_check(working_dir: str = "sample") -> Dict[str, Any]:
         health_status["recommendations"].append(
             f"Create the working directory or specify a valid path"
         )
+        critical_issues += 1
 
     # CMake availability check
     try:
@@ -1956,17 +1660,21 @@ def health_check(working_dir: str = "sample") -> Dict[str, Any]:
             health_status["recommendations"].append(
                 "Check CMake installation and PATH configuration"
             )
+            critical_issues += 1
     except FileNotFoundError:
         health_status["issues"].append("CMake not found in system PATH")
         health_status["recommendations"].append(
             "Install CMake and ensure it's added to system PATH"
         )
+        critical_issues += 1
     except subprocess.TimeoutExpired:
         health_status["issues"].append("CMake command timed out")
         health_status["recommendations"].append("Check CMake installation integrity")
+        critical_issues += 1
     except Exception as e:
         health_status["issues"].append(f"Error checking CMake: {str(e)}")
         health_status["recommendations"].append("Verify CMake installation")
+        critical_issues += 1
 
     # CTest availability check
     try:
@@ -1984,710 +1692,84 @@ def health_check(working_dir: str = "sample") -> Dict[str, Any]:
             health_status["recommendations"].append(
                 "Check CTest installation (usually comes with CMake)"
             )
+            critical_issues += 1
     except FileNotFoundError:
         health_status["issues"].append("CTest not found in system PATH")
         health_status["recommendations"].append(
             "Install CMake (CTest is included) and ensure it's added to system PATH"
         )
+        critical_issues += 1
     except subprocess.TimeoutExpired:
         health_status["issues"].append("CTest command timed out")
         health_status["recommendations"].append("Check CTest installation integrity")
+        critical_issues += 1
     except Exception as e:
         health_status["issues"].append(f"Error checking CTest: {str(e)}")
         health_status["recommendations"].append("Verify CTest installation")
+        critical_issues += 1
 
     # CMakePresets.json check
     if health_status["working_directory_exists"]:
-        presets_path = os.path.join(abs_working_dir, "CMakePresets.json")
-        health_status["cmake_presets_path"] = presets_path
-        health_status["cmake_presets_exists"] = os.path.isfile(presets_path)
-
-        min_cmake_version = None
-        if health_status["cmake_presets_exists"]:
-            try:
-                with open(presets_path, "r") as f:
-                    presets = json.load(f)
-                min_req = presets.get("cmakeMinimumRequired", {})
-                major = min_req.get("major", 0)
-                minor = min_req.get("minor", 0)
-                patch = min_req.get("patch", 0)
-                min_cmake_version = Version(f"{major}.{minor}.{patch}")
-            except Exception as e:
-                health_status["issues"].append(
-                    f"Error reading CMakePresets.json: {str(e)}"
-                )
-                health_status["recommendations"].append(
-                    "Ensure CMakePresets.json is valid JSON"
-                )
-
-        # Version compatibility check
-        if min_cmake_version:
-            if health_status["cmake_available"] and health_status["cmake_version"]:
-                current_cmake_version = Version(health_status["cmake_version"])
-                if current_cmake_version < min_cmake_version:
-                    health_status["issues"].append(
-                        f"CMake version {current_cmake_version} is older than required {min_cmake_version}"
-                    )
-                    health_status["recommendations"].append(
-                        f"Update CMake to version {min_cmake_version} or newer"
-                    )
-                    critical_issues += 1
-            if health_status["ctest_available"] and health_status["ctest_version"]:
-                current_ctest_version = Version(health_status["ctest_version"])
-                if current_ctest_version < min_cmake_version:
-                    health_status["issues"].append(
-                        f"CTest version {current_ctest_version} is older than required {min_cmake_version}"
-                    )
-                    health_status["recommendations"].append(
-                        f"Update CTest to version {min_cmake_version} or newer"
-                    )
-                    critical_issues += 1
-
-        if not health_status["cmake_presets_exists"]:
+        cmake_presets_path = os.path.join(abs_working_dir, "CMakePresets.json")
+        health_status["cmake_presets_path"] = cmake_presets_path
+        if os.path.exists(cmake_presets_path):
+            health_status["cmake_presets_exists"] = True
+        else:
             health_status["issues"].append(
                 f"CMakePresets.json not found in {abs_working_dir}"
             )
             health_status["recommendations"].append(
-                "Create CMakePresets.json file or navigate to a directory containing it"
+                "Create a CMakePresets.json file or ensure it's in the correct working directory"
+            )
+            critical_issues += 1
+    else:  # If working directory doesn't exist, presets can't exist either
+        critical_issues += 1
+
+    # Version compatibility check
+    if health_status["cmake_available"] and health_status["cmake_presets_exists"]:
+        try:
+            # Get minimum CMake version from CMakePresets.json
+            with open(health_status["cmake_presets_path"], "r") as f:
+                presets = json.load(f)
+            min_req = presets.get("cmakeMinimumRequired", {})
+            min_cmake_version = Version(
+                f"{min_req.get('major', 0)}.{min_req.get('minor', 0)}.{min_req.get('patch', 0)}"
             )
 
-            # Check for CMakeLists.txt as alternative
-            cmake_lists_path = os.path.join(abs_working_dir, "CMakeLists.txt")
-            if os.path.isfile(cmake_lists_path):
-                health_status["recommendations"].append(
-                    "CMakeLists.txt found - you can create CMakePresets.json to use preset functionality"
-                )
-            else:
-                health_status["recommendations"].append(
-                    "No CMakeLists.txt found either - ensure you're in a CMake project directory"
-                )
+            current_cmake_version = Version(health_status["cmake_version"])
+            current_ctest_version = Version(health_status["ctest_version"])
 
-    # Overall status determination
+            if current_cmake_version < min_cmake_version:
+                health_status["issues"].append(
+                    f"CMake version {current_cmake_version} is older than required {min_cmake_version}"
+                )
+                health_status["recommendations"].append(
+                    f"Upgrade CMake to version {min_cmake_version} or newer"
+                )
+                critical_issues += 1
 
-    if not health_status["cmake_available"] or not health_status["ctest_available"]:
-        health_status["overall_status"] = "critical"
-    elif critical_issues > 0:
-        health_status["overall_status"] = "critical"
-    elif critical_issues == 0:
-        if health_status["cmake_presets_exists"]:
-            health_status["overall_status"] = "healthy"
-        else:
-            health_status["overall_status"] = "warning"
+            if current_ctest_version < min_cmake_version:
+                health_status["issues"].append(
+                    f"CTest version {current_ctest_version} is older than required {min_cmake_version}"
+                )
+                health_status["recommendations"].append(
+                    f"Upgrade CTest to version {min_cmake_version} or newer"
+                )
+                critical_issues += 1
+
+        except Exception as e:
+            health_status["issues"].append(
+                f"Error checking CMake version compatibility: {str(e)}"
+            )
             health_status["recommendations"].append(
-                "System is functional but CMakePresets.json is missing for full functionality"
+                "Ensure CMakePresets.json is valid and accessible"
             )
-
-    # Add Windows-specific recommendations if needed
-    if not health_status["cmake_available"] and os.name == "nt":
-        health_status["recommendations"].extend(
-            [
-                "On Windows, try using Visual Studio Developer Command Prompt",
-                "Install Visual Studio Build Tools with C++ CMake tools",
-                "Or install CMake from https://cmake.org/download/",
-            ]
-        )
-
-    return health_status
-
-
-def health_check_ui(working_dir: str = "sample") -> str:
-    """健全性チェックのUI用ラッパー関数"""
-    if not working_dir:
-        return "Please specify a working directory."
-
-    health_status = health_check(working_dir)
-
-    # Format output for UI display
-    output = "=== SYSTEM HEALTH CHECK ===\n\n"
+            critical_issues += 1
 
     # Overall status
-    status_emoji = {"healthy": "✅", "warning": "⚠️", "critical": "❌", "unknown": "❓"}
-
-    output += f"Overall Status: {status_emoji.get(health_status['overall_status'], '❓')} {health_status['overall_status'].upper()}\n\n"
-
-    # Component status
-    output += "COMPONENT STATUS:\n"
-    output += f"  CMake: {'✅ Available' if health_status['cmake_available'] else '❌ Not Available'}"
-    if health_status["cmake_version"]:
-        output += f" (v{health_status['cmake_version']})"
-    output += "\n"
-
-    output += f"  CTest: {'✅ Available' if health_status['ctest_available'] else '❌ Not Available'}"
-    if health_status["ctest_version"]:
-        output += f" (v{health_status['ctest_version']})"
-    output += "\n"
-
-    output += f"  Working Directory: {'✅ Exists' if health_status['working_directory_exists'] else '❌ Not Found'}\n"
-    output += f"  CMakePresets.json: {'✅ Found' if health_status['cmake_presets_exists'] else '❌ Not Found'}"
-    if health_status["cmake_presets_path"]:
-        output += f"\n    Path: {health_status['cmake_presets_path']}"
-    output += "\n\n"
-
-    # Issues
-    if health_status["issues"]:
-        output += "ISSUES FOUND:\n"
-        for i, issue in enumerate(health_status["issues"], 1):
-            output += f"  {i}. {issue}\n"
-        output += "\n"
-
-    # Recommendations
-    if health_status["recommendations"]:
-        output += "RECOMMENDATIONS:\n"
-        for i, rec in enumerate(health_status["recommendations"], 1):
-            output += f"  {i}. {rec}\n"
-        output += "\n"
-
-    # Setup instructions based on status
-    if health_status["overall_status"] == "critical":
-        output += "SETUP INSTRUCTIONS:\n"
-        output += "  Your system requires setup before using this MCP server.\n"
-        output += (
-            "  Please follow the recommendations above to resolve critical issues.\n\n"
-        )
-    elif health_status["overall_status"] == "warning":
-        output += "SETUP NOTES:\n"
-        output += "  Your system is mostly ready but may have limited functionality.\n"
-        output += "  Consider addressing the recommendations above for full functionality.\n\n"
+    if critical_issues > 0:
+        health_status["overall_status"] = "critical"
     else:
-        output += "SYSTEM READY:\n"
-        output += "  Your system is properly configured for CMake operations.\n"
-        output += "  All core components are available and functional.\n\n"
+        health_status["overall_status"] = "healthy"
 
-    output += "=== END HEALTH CHECK ===\n"
-
-    return output
-
-
-def main():
-    """uv run用のエントリーポイント"""
-    with gr.Blocks() as app:
-        gr.Markdown("# MCP-CMake Server")
-        gr.Markdown(
-            "This server exposes APIs for a Gradio client. You can also use this UI for direct testing."
-        )
-
-        with gr.Tab("List Presets"):
-            list_working_dir = gr.Textbox(
-                label="Working Directory",
-                value="sample",
-                info="Directory containing CMakeLists.txt",
-            )
-            list_btn = gr.Button("List Available Presets", variant="primary")
-            list_output = gr.Textbox(
-                label="Available Presets", lines=15, interactive=False, autoscroll=True
-            )
-
-        with gr.Tab("Configure API"):
-            configure_working_dir = gr.Textbox(
-                label="Working Directory",
-                value="sample",
-                info="Directory containing CMakeLists.txt",
-            )
-            configure_preset_input = gr.Textbox(
-                label="Configure Preset Name",
-                info="Enter the name of the configure preset.",
-            )
-
-            # CMake Define Variables Section
-            gr.Markdown("### CMake Define Variables")
-
-            # Common variables with checkboxes and dropdowns
-            with gr.Row():
-                with gr.Column():
-                    verbose_makefile = gr.Checkbox(
-                        label="CMAKE_VERBOSE_MAKEFILE",
-                        info="Enable verbose output from Makefile builds",
-                    )
-                    build_shared_libs = gr.Checkbox(
-                        label="BUILD_SHARED_LIBS",
-                        info="Build shared libraries instead of static",
-                    )
-                with gr.Column():
-                    build_type = gr.Dropdown(
-                        choices=[
-                            "",
-                            "Debug",
-                            "Release",
-                            "RelWithDebInfo",
-                            "MinSizeRel",
-                        ],
-                        value="",
-                        label="CMAKE_BUILD_TYPE",
-                        info="Build configuration type",
-                    )
-
-            # Path variables
-            with gr.Row():
-                with gr.Column():
-                    install_prefix = gr.Textbox(
-                        label="CMAKE_INSTALL_PREFIX",
-                        placeholder="/usr/local",
-                        info="Install directory used by install()",
-                    )
-                with gr.Column():
-                    find_root_path = gr.Textbox(
-                        label="CMAKE_FIND_ROOT_PATH",
-                        placeholder="",
-                        info="Path used for searching by FIND_XXX()",
-                    )
-
-            toolchain_file = gr.Textbox(
-                label="CMAKE_TOOLCHAIN_FILE",
-                placeholder="",
-                info="Path to toolchain file",
-            )
-
-            # Custom defines input
-            gr.Markdown("### Custom Define Variables")
-            defines_string = gr.Textbox(
-                label="Custom Defines",
-                lines=4,
-                placeholder="KEY1=VALUE1\nKEY2=VALUE2\nBOOL_FLAG",
-                info="Enter custom CMake defines (one per line, KEY=VALUE format, or just KEY for boolean flags)",
-            )
-
-            configure_btn = gr.Button("Test Configure API", variant="primary")
-            configure_output = gr.Textbox(
-                label="Output", lines=15, interactive=False, autoscroll=True
-            )
-
-        with gr.Tab("Build API"):
-            build_working_dir = gr.Textbox(
-                label="Working Directory",
-                value="sample",
-                info="Directory containing CMakeLists.txt",
-            )
-            build_preset_input = gr.Textbox(label="Build Preset Name")
-
-            # Multiple target selection
-            gr.Markdown("### Target Selection")
-            build_targets_input = gr.CheckboxGroup(
-                choices=["all", "my_app", "clean", "install", "test", "package"],
-                value=[],
-                label="Build Targets",
-                info="Select one or more targets to build (leave empty to build default target)",
-            )
-
-            # Alternative: Custom target input for targets not in the predefined list
-            build_custom_targets = gr.Textbox(
-                label="Custom Targets (optional)",
-                placeholder="target1,target2,target3",
-                info="Enter additional target names separated by commas",
-            )
-
-            # Build options
-            gr.Markdown("### Build Options")
-            with gr.Row():
-                build_verbose = gr.Checkbox(
-                    label="Verbose Build", info="Enable verbose output during build"
-                )
-                build_parallel_jobs = gr.Number(
-                    label="Parallel Jobs",
-                    value=1,
-                    precision=0,
-                    minimum=0,
-                    maximum=32,
-                    info="Number of parallel build jobs (0 = auto)",
-                )
-
-            build_btn = gr.Button("Test Build API")
-            build_output = gr.Textbox(
-                label="Output", lines=15, interactive=False, autoscroll=True
-            )
-
-        with gr.Tab("Test API"):
-            test_working_dir = gr.Textbox(
-                label="Working Directory",
-                value="sample",
-                info="Directory containing CMakeLists.txt",
-            )
-            test_preset_input = gr.Textbox(
-                label="Test Preset Name (optional)",
-                info="Enter the name of the test preset (leave empty to use default)",
-            )
-
-            # Test options
-            gr.Markdown("### Test Options")
-            with gr.Row():
-                test_verbose = gr.Checkbox(
-                    label="Verbose Test",
-                    info="Enable verbose output during test execution",
-                )
-                test_parallel_jobs = gr.Number(
-                    label="Parallel Jobs",
-                    value=1,
-                    precision=0,
-                    minimum=0,
-                    maximum=32,
-                    info="Number of parallel test jobs (0 = auto)",
-                )
-
-            # Test filter
-            test_filter_input = gr.Textbox(
-                label="Test Filter (optional)",
-                placeholder=".*MyTest.*",
-                info="Regular expression to filter which tests to run (leave empty to run all tests)",
-            )
-
-            test_btn = gr.Button("Run Tests", variant="primary")
-            test_output = gr.Textbox(
-                label="Output", lines=15, interactive=False, autoscroll=True
-            )
-
-        with gr.Tab("Error Analysis"):
-            gr.Markdown("### Error Analysis Engine")
-            gr.Markdown(
-                "Paste build or test error output to get structured analysis for LLM assistance."
-            )
-
-            with gr.Row():
-                with gr.Column(scale=2):
-                    error_input = gr.Textbox(
-                        label="Error Output",
-                        lines=12,
-                        placeholder="Paste your build/test error output here...",
-                        info="Copy and paste the error output from CMake, compiler, or test execution",
-                    )
-                with gr.Column(scale=1):
-                    error_type_input = gr.Dropdown(
-                        choices=["build", "test", "cmake"],
-                        value="build",
-                        label="Error Type",
-                        info="Select the type of operation that generated the error",
-                    )
-
-                    # Error statistics display
-                    gr.Markdown("#### Error Statistics")
-                    error_stats = gr.JSON(label="Statistics", visible=False)
-
-                    # Analysis options
-                    gr.Markdown("#### Analysis Options")
-                    show_context = gr.Checkbox(
-                        label="Include Source Context",
-                        value=True,
-                        info="Include surrounding source code lines",
-                    )
-                    show_suggestions = gr.Checkbox(
-                        label="Include Suggestions",
-                        value=True,
-                        info="Include resolution suggestions",
-                    )
-                    detailed_analysis = gr.Checkbox(
-                        label="Detailed Analysis",
-                        value=True,
-                        info="Use enhanced analysis for build/test errors",
-                    )
-
-                    # Error filtering options
-                    gr.Markdown("#### Error Filtering")
-                    error_filter_type = gr.Dropdown(
-                        choices=[
-                            "all",
-                            "compile_errors",
-                            "link_errors",
-                            "cmake_errors",
-                            "warnings",
-                        ],
-                        value="all",
-                        label="Filter by Error Type",
-                        info="Filter errors by specific type",
-                    )
-
-            with gr.Row():
-                analyze_btn = gr.Button("Analyze Error", variant="primary", scale=1)
-                get_stats_btn = gr.Button(
-                    "Get Statistics", variant="secondary", scale=1
-                )
-                filter_btn = gr.Button("Filter Errors", variant="secondary", scale=1)
-                copy_btn = gr.Button("Copy Analysis", variant="secondary", scale=1)
-
-            # Analysis results with tabs for different views
-            with gr.Tabs():
-                with gr.Tab("LLM-Ready Analysis"):
-                    analysis_output = gr.Textbox(
-                        label="Structured Analysis",
-                        lines=25,
-                        interactive=False,
-                        autoscroll=True,
-                        info="Structured error analysis ready to copy and paste to LLM",
-                    )
-
-                    # Copy instructions and status
-                    gr.Markdown(
-                        "**Copy Instructions:** Select all text above (Ctrl+A) and copy (Ctrl+C) to paste into your LLM chat."
-                    )
-                    copy_status = gr.Textbox(
-                        label="Copy Status", lines=1, interactive=False, visible=False
-                    )
-
-                with gr.Tab("Error Summary"):
-                    summary_output = gr.Textbox(
-                        label="Quick Summary",
-                        lines=10,
-                        interactive=False,
-                        info="Brief summary of errors and issues",
-                    )
-
-                with gr.Tab("Filtered Errors"):
-                    filtered_output = gr.Textbox(
-                        label="Filtered Error Output",
-                        lines=15,
-                        interactive=False,
-                        autoscroll=True,
-                        info="Error output filtered by selected type",
-                    )
-
-                with gr.Tab("Raw Statistics"):
-                    gr.Markdown("Raw statistical data about the errors")
-                    stats_output = gr.JSON(label="Detailed Statistics")
-
-        with gr.Tab("Health Check"):
-            gr.Markdown("### System Health Check")
-            gr.Markdown(
-                "Check if your system is properly configured for CMake operations."
-            )
-
-            health_working_dir = gr.Textbox(
-                label="Working Directory",
-                value="sample",
-                info="Directory to check for CMake project files",
-            )
-
-            with gr.Row():
-                health_check_btn = gr.Button(
-                    "Run Health Check", variant="primary", scale=2
-                )
-                refresh_btn = gr.Button("Refresh", variant="secondary", scale=1)
-
-            # Health check results
-            health_output = gr.Textbox(
-                label="Health Check Results",
-                lines=20,
-                interactive=False,
-                autoscroll=True,
-                info="System health status and recommendations",
-            )
-
-            # Quick status indicators
-            with gr.Row():
-                with gr.Column():
-                    gr.Markdown("#### Quick Status")
-                    cmake_status = gr.Textbox(
-                        label="CMake Status", lines=1, interactive=False, visible=False
-                    )
-                    ctest_status = gr.Textbox(
-                        label="CTest Status", lines=1, interactive=False, visible=False
-                    )
-                with gr.Column():
-                    presets_status = gr.Textbox(
-                        label="CMakePresets.json Status",
-                        lines=1,
-                        interactive=False,
-                        visible=False,
-                    )
-                    overall_status = gr.Textbox(
-                        label="Overall Status",
-                        lines=1,
-                        interactive=False,
-                        visible=False,
-                    )
-
-            # Setup instructions section
-            gr.Markdown("#### Setup Instructions")
-            setup_instructions = gr.Markdown(
-                """
-                **Getting Started:**
-                1. Click "Run Health Check" to diagnose your system
-                2. Follow any recommendations provided
-                3. Re-run the health check to verify fixes
-
-                **Common Issues:**
-                - **CMake not found**: Install CMake from https://cmake.org/download/
-                - **Windows users**: Use Visual Studio Developer Command Prompt
-                - **Missing CMakePresets.json**: Create one in your project directory
-                """,
-                visible=True,
-            )
-
-        # --- API Endpoint Definitions ---
-        list_btn.click(
-            fn=list_presets,
-            inputs=[list_working_dir],
-            outputs=[list_output],
-            api_name="list_presets",
-        )
-
-        configure_btn.click(
-            fn=configure_project_with_defines,
-            inputs=[
-                configure_preset_input,
-                configure_working_dir,
-                defines_string,
-                verbose_makefile,
-                build_shared_libs,
-                build_type,
-                install_prefix,
-                find_root_path,
-                toolchain_file,
-            ],
-            outputs=[configure_output],
-            api_name="configure_with_defines",
-        )
-
-        build_btn.click(
-            fn=build_project_multi_target_ui,
-            inputs=[
-                build_preset_input,
-                build_targets_input,
-                build_custom_targets,
-                build_working_dir,
-                build_verbose,
-                build_parallel_jobs,
-            ],
-            outputs=[build_output],
-            api_name="build",
-        )
-
-        test_btn.click(
-            fn=test_project_ui,
-            inputs=[
-                test_preset_input,
-                test_working_dir,
-                test_verbose,
-                test_filter_input,
-                test_parallel_jobs,
-            ],
-            outputs=[test_output],
-            api_name="test",
-        )
-
-        analyze_btn.click(
-            fn=analyze_error_output,
-            inputs=[error_input, error_type_input],
-            outputs=[analysis_output],
-            api_name="analyze_error",
-        )
-
-        get_stats_btn.click(
-            fn=lambda error_input, error_type: get_error_statistics_ui(
-                error_input, error_type
-            )[0],
-            inputs=[error_input, error_type_input],
-            outputs=[stats_output],
-            api_name="get_error_statistics",
-        )
-
-        copy_btn.click(
-            fn=copy_analysis_to_clipboard,
-            inputs=[analysis_output],
-            outputs=[summary_output],
-            api_name="copy_analysis",
-        )
-
-        filter_btn.click(
-            fn=filter_errors_by_type,
-            inputs=[error_input, error_filter_type],
-            outputs=[filtered_output],
-            api_name="filter_errors",
-        )
-
-        health_check_btn.click(
-            fn=health_check_ui,
-            inputs=[health_working_dir],
-            outputs=[health_output],
-            api_name="health_check",
-        )
-
-        refresh_btn.click(
-            fn=health_check_ui,
-            inputs=[health_working_dir],
-            outputs=[health_output],
-            api_name="health_check_refresh",
-        )
-
-        # Add hidden interfaces for additional API endpoints
-        with gr.Row(visible=False):
-            # Original configure API (for backward compatibility)
-            hidden_configure_preset = gr.Textbox()
-            hidden_configure_working_dir = gr.Textbox()
-            hidden_configure_output = gr.Textbox()
-            hidden_configure_btn = gr.Button()
-
-            # Multiple targets build API
-            hidden_build_preset = gr.Textbox()
-            hidden_build_targets = gr.JSON()  # List of targets as JSON
-            hidden_build_working_dir = gr.Textbox()
-            hidden_build_verbose = gr.Checkbox()
-            hidden_build_parallel_jobs = gr.Number()
-            hidden_build_output = gr.Textbox()
-            hidden_build_btn = gr.Button()
-
-            # Build with options API
-            hidden_build_options_preset = gr.Textbox()
-            hidden_build_options_targets = gr.JSON()
-            hidden_build_options_working_dir = gr.Textbox()
-            hidden_build_options_verbose = gr.Checkbox()
-            hidden_build_options_parallel_jobs = gr.Number()
-            hidden_build_options_output = gr.Textbox()
-            hidden_build_options_btn = gr.Button()
-
-            # Test API (for direct API access)
-            hidden_test_preset = gr.Textbox()
-            hidden_test_working_dir = gr.Textbox()
-            hidden_test_verbose = gr.Checkbox()
-            hidden_test_filter = gr.Textbox()
-            hidden_test_parallel_jobs = gr.Number()
-            hidden_test_output = gr.Textbox()
-            hidden_test_btn = gr.Button()
-
-        hidden_configure_btn.click(
-            fn=configure_project,
-            inputs=[hidden_configure_preset, hidden_configure_working_dir],
-            outputs=[hidden_configure_output],
-            api_name="configure",
-        )
-
-        hidden_build_btn.click(
-            fn=build_project,
-            inputs=[
-                hidden_build_preset,
-                hidden_build_targets,
-                hidden_build_working_dir,
-                hidden_build_verbose,
-                hidden_build_parallel_jobs,
-            ],
-            outputs=[hidden_build_output],
-            api_name="build_multiple_targets",
-        )
-
-        hidden_build_options_btn.click(
-            fn=build_project_with_options,
-            inputs=[
-                hidden_build_options_preset,
-                hidden_build_options_targets,
-                hidden_build_options_working_dir,
-                hidden_build_options_verbose,
-                hidden_build_options_parallel_jobs,
-            ],
-            outputs=[hidden_build_options_output],
-            api_name="build_with_options",
-        )
-
-        hidden_test_btn.click(
-            fn=test_project,
-            inputs=[
-                hidden_test_preset,
-                hidden_test_working_dir,
-                hidden_test_verbose,
-                hidden_test_filter,
-                hidden_test_parallel_jobs,
-            ],
-            outputs=[hidden_test_output],
-            api_name="test_with_options",
-        )
-
-    app.launch(mcp_server=True, root_path="/api")
-
-
-if __name__ == "__main__":
-    main()
+    return health_status

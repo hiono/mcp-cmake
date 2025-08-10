@@ -5,7 +5,7 @@ import subprocess
 import pytest
 from packaging.version import Version
 
-from mcp_cmake import health_check  # Import health_check
+from mcp_cmake.mcp_cmake_core import health_check  # Import health_check
 
 
 def get_cmake_version():
