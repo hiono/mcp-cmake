@@ -21,7 +21,7 @@ def test_health_check_calls_core_function(mock_core_health_check):
     result = mcp_server.health_check(working_dir="/fake/dir")
 
     # Assert
-    mock_core_health_check.assert_called_once_with("/fake/dir")
+    mock_core_health_check.assert_called_once_with(working_dir="/fake/dir")
     assert result == expected_result
 
 

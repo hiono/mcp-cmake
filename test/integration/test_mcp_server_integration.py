@@ -14,8 +14,8 @@ MCP_SERVER_COMMAND = [
     "-m",
     "mcp_cmake.mcp_cmake_server",
     "--stdio",
-    "-w",
-    "/workspace/sample",
+    # "-w",
+    # "/workspace/sample",
 ]
 
 
@@ -77,6 +77,12 @@ def mcp_server_session():
     if os.path.exists(stderr_log_path):
         os.remove(stderr_log_path)
 
+    # 各テストの前にビルドディレクトリをクリーンアップ
+    build_dir = os.path.join("/workspace/sample", "build")
+    if os.path.exists(build_dir):
+        import shutil
+        shutil.rmtree(build_dir)
+
 
 def send_request_and_get_response(process: subprocess.Popen, request: dict) -> dict:
     """プロセスにリクエストを送信し、応答を読み取って返すヘルパー関数"""
@@ -105,46 +111,31 @@ def test_tools_list_schema(mcp_server_session):
     tools = {tool["name"]: tool for tool in response["result"]["tools"]}
     print("\n--- TOOLS/LIST SCHEMA ---")
     import pprint
-
     pprint.pprint(tools)
     print("------------------------")
 
     expected_tools = [
-        "health_check",
-        "list_presets",
-        "configure_project",
-        "build_project",
-        "test_project",
-        "format_error_for_llm_analysis",
+        "health_check", "list_presets", "configure_project",
+        "build_project", "test_project", "format_error_for_llm_analysis",
     ]
     assert set(tools.keys()) == set(expected_tools)
-    assert (
-        tools["health_check"]["inputSchema"]["properties"]["working_dir"]["default"]
-        == "sample"
-    )
-
+    assert tools["health_check"]["inputSchema"]["properties"]["working_dir"]["default"] == "sample"
 
 @pytest.mark.parametrize(
-    "tool_name, arguments, expected_substring",
+    ("tool_name", "arguments", "expected_substring"),
     [
-        ("health_check", {}, "PoC_OK"),
-        ("list_presets", {}, "PoC: preset1"),
-        (
-            "configure_project",
-            {"preset": "test-preset"},
-            "Configuring project test-preset",
-        ),
-        ("build_project", {"preset": "test-preset"}, "Building project test-preset"),
-        (
-            "test_project",
-            {"preset": "test-preset", "test_filter": "some_test"},
-            "with filter some_test",
-        ),
-        (
-            "format_error_for_llm_analysis",
-            {"error_output": "an error occurred"},
-            "Analyzed error",
-        ),
+        # health_checkは辞書を返すので、キーの存在をチェック
+        ("health_check", {"working_dir": "sample"}, '"overall_status": "healthy"'),
+        # list_presetsはプリセット名を返すので、その一部をチェック
+        ("list_presets", {"working_dir": "sample"}, '"default"'),
+        # configureは成功メッセージをチェック
+        ("configure_project", {"preset": "default", "working_dir": "sample"}, "Build files have been written to"),
+        # buildは成功メッセージをチェック (より堅牢なチェックのため、空文字列とエラーメッセージの不在を後で確認)
+        ("build_project", {"preset": "default", "working_dir": "sample"}, ""),
+        # testはテストがない旨のメッセージをチェック (プリセットを使用)
+        ("test_project", {"preset": "default", "working_dir": "sample"}, "No tests were found!!!"),
+        # format_errorは解析結果のヘッダーをチェック
+        ("format_error_for_llm_analysis", {"error_output": "error: an error occurred"}, "COMPREHENSIVE ERROR ANALYSIS"),
     ],
 )
 def test_tools_call_for_all_tools(
@@ -179,3 +170,5 @@ def test_tools_call_for_all_tools(
         result_str = result["content"][0]["text"]
 
     assert expected_substring in result_str
+    if tool_name == "build_project":
+        assert "[ERROR]" not in result_str

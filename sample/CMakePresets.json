@@ -30,5 +30,11 @@
       "name": "windows-msvc",
       "configurePreset": "windows-msvc"
     }
+  ],
+  "testPresets": [
+    {
+      "name": "default",
+      "configurePreset": "default"
+    }
   ]
 }
