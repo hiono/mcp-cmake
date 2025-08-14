@@ -17,6 +17,8 @@ from mcp_cmake.mcp_cmake_models import (
     TestFailure,
 )
 
+from mcp_cmake.mcp_cmake_helpers import get_minimum_cmake_version
+
 # --- Constants ---
 CMAKE_EXE = "cmake"
 
@@ -28,46 +30,48 @@ class ErrorAnalyzer:
     # エラーパターンの定義
     COMPILE_ERROR_PATTERNS = [
         # MSVC patterns
-        (r"(.+?)\((\d+),(\d+)\):\s*error\s+C(\d+):\s*(.+)", "msvc_compile"),
+        (r"^([^()]+)\\((\\d+),(\\d+)\\):\\s*error\\s+C(\\d+):\\s*(.+)", "msvc_compile"),
         # GCC/Clang patterns
-        (r"(.+?):(\d+):(\d+):\s*error:\s*(.+)", "gcc_compile"),
+        (r"^([^:]+):(\\d+):(\\d+):\\s*error:\\s*(.+)", "gcc_compile"),
         # Generic compile error
-        (r"(.+?):(\d+):\s*error:\s*(.+)", "generic_compile"),
+        (r"^([^:]+):(\\d+):\\s*error:\\s*(.+)", "generic_compile"),
     ]
 
     LINK_ERROR_PATTERNS = [
         # MSVC linker
-        (r"\s*(.+?)\s*:\s*error\s+LNK(\d+):\s+(.+)", "msvc_link"),
+        (r"^\s*([^:]+)\s*:\s*error\s+LNK(\d+):\s+(.+)", "msvc_link"),
         # GCC/Clang linker
-        (r"\s*(.+?):\(.+?\):\s*(undefined reference to `.+?`)", "gcc_link"),
+        (r"^\s*([^:]+):\(.+?\):\s*(undefined reference to `.+?`)", "gcc_link"),
         # Generic linker error
-        (r"ld:\s*(.+)", "generic_link"),
+        (r"^ld:\s*(.+)", "generic_link"),
     ]
 
     CMAKE_ERROR_PATTERNS = [
         # CMake configuration errors
-        (r"CMake Error at (.+?):(\d+)\s*\((.+?)\):\s*(.+)", "cmake_config"),
+        (r"^CMake Error at ([^:]+):(\d+)\s*\((.+?)\):\s*(.+)", "cmake_config"),
         # CMake general errors
-        (r"CMake Error:\s*(.+)", "cmake_general"),
+        (r"^CMake Error:\s*(.+)", "cmake_general"),
     ]
 
     TEST_ERROR_PATTERNS = [
         # CTest test failures with ***Failed
-        (r"(\d+)/\d+\s+Test\s+#(\d+):\s+(.+?)\s+\.+\*{3}Failed", "test_failed"),
+        (r"^(\\d+)/\\d+\\s+Test\\s+#(\\d+):\\s+(.+?)\\s+\\.+\\\\*{3}Failed", "test_failed"),
         # CTest timeout with ***Timeout
-        (r"(\d+)/\d+\s+Test\s+#(\d+):\s+(.+?)\s+\.+\*{3}Timeout", "test_timeout"),
+        (r"^(\\d+)/\\d+\\s+Test\\s+#(\\d+):\\s+(.+?)\\s+\\.+\\\\*{3}Timeout", "test_timeout"),
         # CTest not run with ***Not Run
-        (r"(\d+)/\d+\s+Test\s+#(\d+):\s+(.+?)\s+\.+\*{3}Not Run", "test_not_run"),
+        (r"^(\\d+)/\\d+\\s+Test\\s+#(\\d+):\\s+(.+?)\\s+\\.+\\\\*{3}Not Run", "test_not_run"),
         # Legacy patterns for backward compatibility
-        (r"(\d+):\s*Test\s+(.+?)\s+.*Failed", "test_failed"),
-        (r"(\d+):\s*Test\s+(.+?)\s+.*Timeout", "test_timeout"),
-        (r"(\d+):\s*Test\s+(.+?)\s+.*Not Run", "test_not_run"),
+        (r"^(\\d+):\\s*Test\\s+(.+?)\\s+.*Failed", "test_failed"),
+        (r"^(\\d+):\\s*Test\\s+(.+?)\\s+.*Timeout", "test_timeout"),
+        (r"^(\\d+):\\s*Test\\s+(.+?)\\s+.*Not Run", "test_not_run"),
         # Generic test error
-        (r"Test\s+(.+?)\s+.*FAILED", "test_generic_failed"),
+        (r"^Test\\s+(.+?)\\s+.*FAILED", "test_generic_failed"),
     ]
 
     def analyze_error(
-        self, output: str, command_type: str = "build"
+        self,
+        output: str,
+        command_type: str = "build"
     ) -> Optional[StructuredError]:
         """エラー出力を解析して構造化されたエラー情報を生成する"""
         if not output:  # Keep this check for truly empty output
@@ -84,7 +88,7 @@ class ErrorAnalyzer:
 
         # パターンマッチングでエラーを解析
         for pattern, error_type in patterns:
-            match = re.search(pattern, output, re.MULTILINE)
+            match = re.search(pattern, output, re.MULTILINE | re.DOTALL)
             if match:
                 return self._create_structured_error(match, error_type, output)
 
@@ -99,7 +103,10 @@ class ErrorAnalyzer:
         return None  # No error pattern found and no general error keywords
 
     def _create_structured_error(
-        self, match, error_type: str, raw_output: str
+        self,
+        match,
+        error_type: str,
+        raw_output: str
     ) -> StructuredError:
         """マッチした正規表現から構造化エラーを作成する"""
         groups = match.groups()
@@ -154,7 +161,9 @@ class ErrorAnalyzer:
         )
 
     def _create_generic_error(
-        self, raw_output: str, command_type: str
+        self,
+        raw_output: str,
+        command_type: str
     ) -> StructuredError:
         """汎用エラーを作成する"""
         # エラーメッセージを抽出
@@ -186,7 +195,10 @@ class ErrorAnalyzer:
         )
 
     def _extract_context(
-        self, raw_output: str, file_path: Optional[str], line_number: Optional[int]
+        self,
+        raw_output: str,
+        file_path: Optional[str],
+        line_number: Optional[int]
     ) -> List[str]:
         """エラー周辺のコンテキスト情報を抽出する"""
         context = []
@@ -254,7 +266,7 @@ class ErrorAnalyzer:
         lines = raw_output.split("\n")
 
         # 全体のテキストでCMakeエラーを先に検索（マルチライン対応）
-        cmake_multiline_pattern = r"CMake Error at (.+?):(\d+)\s*\((.+?)\):\s*\n\s*(.+?)(?=\n\n|\nCMake|\n[A-Z]|\Z)"
+        cmake_multiline_pattern = r"CMake Error at (.+?):(\\d+)\\s*\\((.+?)\\):\\s*\\n\\s*(.+?)(?=\\n\\n|\\nCMake|\\n[A-Z]|\\Z)"
         cmake_multiline_matches = re.finditer(
             cmake_multiline_pattern, raw_output, re.MULTILINE | re.DOTALL
         )
@@ -267,7 +279,7 @@ class ErrorAnalyzer:
                     "column": None,
                     "type": "cmake_error",
                     "code": function.strip(),
-                    "message": message.strip().replace("\n", " "),
+                    "message": message.strip().replace("\\n", " "),
                 }
             )
             details["error_types"].append("cmake_error")
@@ -276,7 +288,7 @@ class ErrorAnalyzer:
         for line in lines:
             # MSVC エラーパターン
             msvc_match = re.search(
-                r"(.+?)\((\d+),(\d+)\):\s*(error|warning)\s+C(\d+):\s*(.+)", line
+                r"(.+?)\\((\\d+),(\\d+)\\):\\s*(error|warning)\\s+C(\\d+):\\s*(.+)", line
             )
             if msvc_match:
                 file_path, line_num, col_num, severity, error_code, message = (
@@ -297,7 +309,7 @@ class ErrorAnalyzer:
                 continue
 
             # GCC/Clang エラーパターン
-            gcc_match = re.search(r"(.+?):(\d+):(\d+):\s*(error|warning):\s*(.+)", line)
+            gcc_match = re.search(r"(.+?):(\\d+):(\\d+):\\s*(error|warning):\\s*(.+)", line)
             if gcc_match:
                 file_path, line_num, col_num, severity, message = gcc_match.groups()
                 details["files_with_errors"].append(
@@ -318,7 +330,7 @@ class ErrorAnalyzer:
 
             # CMake エラーパターン
             cmake_match = re.search(
-                r"CMake Error at (.+?):(\d+)\s*\((.+?)\):\s*(.+)", line
+                r"CMake Error at (.+?):(\\d+)\\s*\\((.+?)\\):\\s*(.+)", line
             )
             if cmake_match:
                 file_path, line_num, function, message = cmake_match.groups()
@@ -337,7 +349,7 @@ class ErrorAnalyzer:
                 continue
 
             # CMake 一般エラーパターン
-            cmake_general_match = re.search(r"CMake Error:\s*(.+)", line)
+            cmake_general_match = re.search(r"CMake Error:\\s*(.+)", line)
             if cmake_general_match:
                 message = cmake_general_match.group(1)
                 details["files_with_errors"].append(
@@ -356,14 +368,14 @@ class ErrorAnalyzer:
             # コンパイラ情報の抽出
             if "Microsoft (R) C/C++ Optimizing Compiler" in line:
                 details["compiler_info"] = "MSVC"
-            elif "gcc version" in line.lower() or "g++ " in line.lower():
+            elif "gcc version" in line.lower() or "g++" in line.lower():
                 details["compiler_info"] = "GCC"
             elif "clang version" in line.lower():
                 details["compiler_info"] = "Clang"
 
             # ビルドターゲット情報の抽出
             if "Building CXX object" in line:
-                target_match = re.search(r"Building CXX object (.+?)\.dir", line)
+                target_match = re.search(r"Building CXX object (.+?)\\.dir", line)
                 if target_match:
                     details["build_target"] = target_match.group(1)
 
@@ -380,7 +392,10 @@ class ErrorAnalyzer:
         return details
 
     def get_source_context_enhanced(
-        self, file_path: str, line_number: int, context_lines: int = 5
+        self,
+        file_path: str,
+        line_number: int,
+        context_lines: int = 5
     ) -> Dict[str, Any]:
         """指定されたファイルの指定行周辺のソースコードコンテキストを取得する"""
         context_info = {
@@ -653,7 +668,7 @@ class ErrorAnalyzer:
         for line in lines:
             # MSVC エラーパターン
             msvc_match = re.search(
-                r"(.+?)\((\d+),(\d+)\):\s*(error|warning)\s+C(\d+):\s*(.+)", line
+                r"(.+?)\\((\\d+),(\\d+)\\):\\s*(error|warning)\\s+C(\\d+):\\s*(.+)", line
             )
             if msvc_match:
                 file_path, line_num, col_num, severity, error_code, message = (
@@ -676,7 +691,7 @@ class ErrorAnalyzer:
                 continue
 
             # GCC/Clang エラーパターン
-            gcc_match = re.search(r"(.+?):(\d+):(\d+):\s*(error|warning):\s*(.+)", line)
+            gcc_match = re.search(r"(.+?):(\\d+):(\\d+):\\s*(error|warning):\\s*(.+)", line)
             if gcc_match:
                 file_path, line_num, col_num, severity, message = gcc_match.groups()
                 errors.append(
@@ -734,14 +749,14 @@ class ErrorAnalyzer:
         for line in lines:
             # 新しいCTest形式のパターンマッチング (例: 2/3 Test #2: AdvancedTest ...***Failed)
             test_match = re.search(
-                r"(\d+)/\d+\s+Test\s+#(\d+):\s+(.+?)\s+\.+(.+)", line
+                r"(\\d+)/\\d+\\s+Test\\s+#(\\d+):\\s+(.+?)\\s+\\.+(.+)", line
             )
             if test_match:
                 test_seq, test_num, test_name, result = test_match.groups()
                 total_tests = max(total_tests, int(test_seq))
 
                 # 実行時間を抽出
-                time_match = re.search(r"(\d+\.\d+)\s+sec", result)
+                time_match = re.search(r"(\\d+\\.\\d+)\\s+sec", result)
                 execution_time = float(time_match.group(1)) if time_match else None
 
                 if "***Failed" in result:
@@ -781,7 +796,7 @@ class ErrorAnalyzer:
                 continue
 
             # 従来形式のパターンマッチング (後方互換性のため)
-            legacy_match = re.search(r"(\d+):\s*Test\s+(.+?)\s+\.\.\.\s*(.+)", line)
+            legacy_match = re.search(r"(\\d+):\\s*Test\\s+(.+?)\\s+\\.+\\s*(.+)", line)
             if legacy_match:
                 test_num, test_name, result = legacy_match.groups()
                 total_tests += 1
@@ -823,7 +838,7 @@ class ErrorAnalyzer:
 
         # テスト統計の抽出
         stats_match = re.search(
-            r"(\d+)% tests passed, (\d+) tests failed out of (\d+)", output
+            r"(\\d+)% tests passed, (\\d+) tests failed out of (\\d+)", output
         )
         if stats_match:
             failed_count = int(stats_match.group(2))
@@ -1024,7 +1039,6 @@ class ErrorAnalyzer:
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         output = f"=== TEST ERROR ANALYSIS ===\n"
-        output += f"Timestamp: {timestamp}\n"
         output += f"Total Tests: {test_error.total_tests}\n"
         output += f"Passed Tests: {test_error.passed_tests}\n"
         output += f"Failed Tests: {test_error.failed_tests}\n"
@@ -1652,7 +1666,7 @@ def health_check(working_dir: str = "sample") -> Dict[str, Any]:
         if result.returncode == 0:
             health_status["cmake_available"] = True
             # Extract version from output
-            version_match = re.search(r"cmake version (\d+\.\d+\.\d+)", result.stdout)
+            version_match = re.search(r"cmake version (\\d+\\.\\d+\\.\\d+)", result.stdout)
             if version_match:
                 health_status["cmake_version"] = version_match.group(1)
         else:
@@ -1684,7 +1698,7 @@ def health_check(working_dir: str = "sample") -> Dict[str, Any]:
         if result.returncode == 0:
             health_status["ctest_available"] = True
             # Extract version from output
-            version_match = re.search(r"ctest version (\d+\.\d+\.\d+)", result.stdout)
+            version_match = re.search(r"ctest version (\\d+\\.\\d+\\.\\d+)", result.stdout)
             if version_match:
                 health_status["ctest_version"] = version_match.group(1)
         else:
@@ -1731,45 +1745,19 @@ def health_check(working_dir: str = "sample") -> Dict[str, Any]:
             # Get minimum CMake version from CMakePresets.json
             with open(health_status["cmake_presets_path"], "r") as f:
                 presets = json.load(f)
-            min_req = presets.get("cmakeMinimumRequired", {})
-            min_cmake_version = Version(
-                f"{min_req.get('major', 0)}.{min_req.get('minor', 0)}.{min_req.get('patch', 0)}"
-            )
-
-            current_cmake_version = Version(health_status["cmake_version"])
-            current_ctest_version = Version(health_status["ctest_version"])
-
-            if current_cmake_version < min_cmake_version:
-                health_status["issues"].append(
-                    f"CMake version {current_cmake_version} is older than required {min_cmake_version}"
-                )
-                health_status["recommendations"].append(
-                    f"Upgrade CMake to version {min_cmake_version} or newer"
-                )
-                critical_issues += 1
-
-            if current_ctest_version < min_cmake_version:
-                health_status["issues"].append(
-                    f"CTest version {current_ctest_version} is older than required {min_cmake_version}"
-                )
-                health_status["recommendations"].append(
-                    f"Upgrade CTest to version {min_cmake_version} or newer"
-                )
-                critical_issues += 1
-
+        except json.JSONDecodeError:
+            health_status["min_cmake_version"] = None
+            health_status["cmake_version_check_message"] = "Error decoding CMakePresets.json"
         except Exception as e:
-            health_status["issues"].append(
-                f"Error checking CMake version compatibility: {str(e)}"
-            )
-            health_status["recommendations"].append(
-                "Ensure CMakePresets.json is valid and accessible"
-            )
-            critical_issues += 1
+            health_status["min_cmake_version"] = None
+            health_status["cmake_version_check_message"] = f"An unexpected error occurred: {e}"
 
-    # Overall status
-    if critical_issues > 0:
-        health_status["overall_status"] = "critical"
-    else:
+    # Determine overall status
+    if critical_issues == 0:
         health_status["overall_status"] = "healthy"
+    elif critical_issues > 0 and len(health_status["issues"]) == critical_issues:
+        health_status["overall_status"] = "warning"
+    else:
+        health_status["overall_status"] = "unhealthy"
 
     return health_status

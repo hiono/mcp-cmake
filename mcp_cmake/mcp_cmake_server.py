@@ -2,18 +2,27 @@ import argparse
 import sys
 from typing import Optional
 
-from mcp.server.fastmcp import FastMCP
+from fastmcp import FastMCP
 
 import mcp_cmake.mcp_cmake_core as core
 
+# ## FastMCP Constructor Parameters
+# * name: (str) default:"FastMCP" - A human-readable name for your server
+# * instructions: (str|None) - Description of how to interact with this server. These instructions help clients understand the server’s purpose and available functionality
+# * auth: (OAuthProvider|TokenVerifier|None) - Authentication provider for securing HTTP-based transports. See [Authentication](https://gofastmcp.com/servers/auth/authentication) for configuration options
+# * lifespan: (AsyncContextManager|None) - An async context manager function for server startup and shutdown logic
+# * tools: (list[Tool|Callable]|None) - A list of tools (or functions to convert to tools) to add to the server. In some cases, providing tools programmatically may be more convenient than using the decorator`@mcp.tool`
+# * dependencies: (list[str]|None) - Optional server dependencies list with package specifications
+# * include_tags: (set[str]|None) - Only expose components with at least one matching tag
+# * exclude_tags: (set[str]|None) - Hide components with any matching tag
+# * on_duplicate_tools: (Literal["error","warn","replace"]) default:"error" - How to handle duplicate tool registrations
+# * on_duplicate_resources: (Literal["error","warn","replace"]) default:"warn" - How to handle duplicate resource registrations
+# * on_duplicate_prompts: (Literal["error","warn","replace"]) default:"replace" - How to handle duplicate prompt registrations
+# * include_fastmcp_meta: (bool) default:"True"
 mcp = FastMCP(
     name="mcp-cmake",
-    title="CMake Project Helper",
-    description="A tool to help with CMake project configuration, building, testing, and error analysis.",
-    host="127.0.0.1",  # デフォルトホスト
-    port=8000,  # デフォルトポート
+    debug=True,
 )
-mcp.settings.log_level = "DEBUG"  # Set log level at top level
 
 
 @mcp.tool()
@@ -23,10 +32,10 @@ def health_check(working_dir: str = "sample") -> dict:
 
 
 @mcp.tool()
-def list_presets(working_dir: Optional[str] = None) -> str:
+def list_presets(working_dir: Optional[str] = None) -> list[str]:
     """Lists available CMake presets."""
     # The core function is a generator, so we join the output.
-    return "".join(list(core.list_presets(working_dir=working_dir)))
+    return list(core.list_presets(working_dir=working_dir))
 
 
 @mcp.tool()
@@ -107,7 +116,7 @@ def format_error_for_llm_analysis(
 
 def main():
     parser = argparse.ArgumentParser(description="MCP-CMake Server")
-    parser.add_argument("--stdio", action="store_true", help="Run in stdio mode.")
+    parser.add_argument("--stdio", action="store_true", default=True, help="Run in stdio mode.")
     parser.add_argument(
         "--host", type=str, default=mcp.settings.host, help="Host for HTTP server."
     )
