@@ -1,0 +1,30 @@
+[project]
+name = "mcp-cmake"
+version = "0.1.0"
+description = "MCP server for CMake project"
+requires-python = ">=3.12"
+dependencies = ["fastmcp"]
+
+[project.scripts]
+mcp-cmake = "mcp_cmake.mcp_cmake_server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["mcp_cmake"]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-mock", # For mocking
+    "packaging", # For version comparison
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-mock",
+    "pytest-asyncio",
+]
