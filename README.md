@@ -1,3 +1,9 @@
+# [DEPRECATED]
+
+Maintenance has ended. Please use [cmake-skill](https://github.com/hiono/cmake-skill) instead.
+
+---
+
 # MCP-CMake: A Tool for CMake Project Management
 
 [日本語のドキュメントはこちら (View in Japanese)](./README_ja.md)
